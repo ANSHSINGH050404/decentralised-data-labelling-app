@@ -1,4 +1,4 @@
-import Router, { response } from "express";
+import Router from "express";
 import jwt from "jsonwebtoken";
 import { prisma } from "../../db";
 import { authMiddleware } from "../middlewares/authMiddleware";
@@ -6,7 +6,7 @@ import { S3Client } from "@aws-sdk/client-s3";
 import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 import { randomUUID } from "crypto";
 import { createTaskInput } from "../types";
-import {z} from "zod";
+import { z } from "zod";
 import { TOTAL_DECIMALS } from "../config";
 const router = Router();
 
@@ -22,6 +22,9 @@ const DEFAULT_TITLE = "Select the most clickable thumbnail";
 router.get("/presignedUrl", authMiddleware, async (req, res) => {
   const userId = req.userId!;
   const key = `fever/${userId}/${randomUUID()}.jpg`;
+
+  console.log(userId);
+  console.log(key);
 
   const { url, fields } = await createPresignedPost(s3Client, {
     Bucket: process.env.BUCKET_NAME!,
@@ -41,11 +44,15 @@ router.get("/presignedUrl", authMiddleware, async (req, res) => {
 });
 
 router.post("/signin", async (req, res) => {
-  const hardcodedWalletAddress = "0x1234567890123456789012345678901234567890";
+  const { publicKey } = req.body;
+
+  if (!publicKey || typeof publicKey !== "string") {
+    return res.status(400).json({ message: "publicKey is required" });
+  }
 
   const existingUser = await prisma.user.findUnique({
     where: {
-      address: hardcodedWalletAddress,
+      address: publicKey,
     },
   });
 
@@ -61,7 +68,7 @@ router.post("/signin", async (req, res) => {
   } else {
     const newUser = await prisma.user.create({
       data: {
-        address: hardcodedWalletAddress,
+        address: publicKey,
       },
     });
     const token = jwt.sign({ userId: newUser.id }, process.env.JWT_SECRET!, {
@@ -84,21 +91,21 @@ router.post("/task", authMiddleware, async (req, res) => {
 
   //parse the signature here to ensure that the user payed for the task
 
-const task = await prisma.task.create({
-  data: {
-    title: parsedBody.data.title ?? DEFAULT_TITLE,
-    amount: 1 * TOTAL_DECIMALS,
-    signature: parsedBody.data.signature,
-    user_id: req.userId!,
-  },
-});
+  const task = await prisma.task.create({
+    data: {
+      title: parsedBody.data.title ?? DEFAULT_TITLE,
+      amount: 1 * TOTAL_DECIMALS,
+      signature: parsedBody.data.signature,
+      user_id: req.userId!,
+    },
+  });
 
-await prisma.option.createMany({
-  data: parsedBody.data.options.map((x) => ({
-    image_url: x.imageUrl,
-    task_id: task.id,
-  })),
-});
+  await prisma.option.createMany({
+    data: parsedBody.data.options.map((x) => ({
+      image_url: x.imageUrl,
+      task_id: task.id,
+    })),
+  });
 
   res.json({
     message: "Task created successfully",
@@ -106,11 +113,9 @@ await prisma.option.createMany({
   });
 });
 
-
 const taskQuerySchema = z.object({
-  taskId: z.string().regex(/^\d+$/).transform(Number)
+  taskId: z.string().regex(/^\d+$/).transform(Number),
 });
-
 
 router.get("/task", authMiddleware, async (req, res) => {
   try {
@@ -118,7 +123,7 @@ router.get("/task", authMiddleware, async (req, res) => {
 
     if (!parsed.success) {
       return res.status(400).json({
-        message: "Invalid taskId"
+        message: "Invalid taskId",
       });
     }
 
@@ -129,21 +134,20 @@ router.get("/task", authMiddleware, async (req, res) => {
     const taskDetails = await prisma.task.findFirst({
       where: {
         user_id: userId,
-        id: taskId
+        id: taskId,
       },
       include: {
-        options: true
-      }
+        options: true,
+      },
     });
 
     if (!taskDetails) {
       return res.status(403).json({
-        message: "You dont have access to this task"
+        message: "You dont have access to this task",
       });
     }
 
     res.json(taskDetails);
-
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
@@ -151,20 +155,22 @@ router.get("/task", authMiddleware, async (req, res) => {
 });
 
 router.get("/balance", authMiddleware, async (req, res) => {
-    // @ts-ignore
-    const userId: string = req.userId;
+  const userId = req.userId!;
 
-    const worker = await prisma.worker.findFirst({
-        where: {
-            id: Number(userId)
-        }
-    })
+  const user = await prisma.user.findFirst({
+    where: {
+      id: Number(userId),
+    },
+  });
 
-    res.json({
-        pendingAmount: worker?.pending_amount,
-        lockedAmount: worker?.pending_amount,
-    })
-})
+  if (!user) {
+    return res.status(404).json({ message: "User not found" });
+  }
 
+  res.json({
+    userId: user.id,
+    address: user.address,
+  });
+});
 
 export default router;

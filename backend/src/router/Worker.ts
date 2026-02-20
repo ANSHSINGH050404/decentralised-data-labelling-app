@@ -98,7 +98,7 @@ router.post("/submission", workerMiddleware, async (req, res) => {
         },
         data: {
           pending_amount: {
-            increment: Number(amount * BigInt(TOTAL_DECIMALS)),
+            increment: amount,
           },
         },
       });
@@ -160,7 +160,7 @@ router.post("/payout", workerMiddleware, async (req, res) => {
 
     await tx.payouts.create({
       data: {
-        user_id: Number(userId),
+        worker_id: Number(userId),
         amount: worker.pending_amount,
         status: "Processing",
         signature: txnId,
@@ -177,4 +177,3 @@ router.post("/payout", workerMiddleware, async (req, res) => {
 });
 
 export default router;
-console.log();
