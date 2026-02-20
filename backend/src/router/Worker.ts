@@ -3,6 +3,7 @@ import { prisma } from "../../db";
 import jwt from "jsonwebtoken";
 const router = Router();
 
+export const WORKERJWT_SECRET = process.env.JWT_SECRET! + "worker";
 router.post("/signin", async (req, res) => {
   const hardcodedWalletAddress = "0x1234567890123456789012345678901234567890";
 
@@ -17,7 +18,7 @@ router.post("/signin", async (req, res) => {
       {
         userId: existingUser.id,
       },
-      process.env.JWT_SECRET!,
+      WORKERJWT_SECRET,
       { expiresIn: "1h" },
     );
     res.json({ token });
@@ -25,6 +26,8 @@ router.post("/signin", async (req, res) => {
     const newUser = await prisma.worker.create({
       data: {
         address: hardcodedWalletAddress,
+        pending_amount: 0,
+        locked_amount: 0,
       },
     });
     const token = jwt.sign({ userId: newUser.id }, process.env.JWT_SECRET!, {
