@@ -2,10 +2,16 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  WalletDisconnectButton,
+  WalletMultiButton,
+} from "@solana/wallet-adapter-react-ui";
+import { useWallet } from "@solana/wallet-adapter-react";
 
 export const Appbar = () => {
   const [isSignedIn, setIsSignedIn] = useState(false);
   const router = useRouter();
+  const { publicKey } = useWallet();
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -46,15 +52,13 @@ export const Appbar = () => {
 
           {/* Right side */}
           <div className="flex items-center gap-3">
-            {isSignedIn ? (
+            {/* Token-based auth status */}
+            {isSignedIn && (
               <>
-                {/* Signed-in indicator */}
                 <div className="hidden sm:flex items-center gap-2 text-sm text-green-600 font-medium bg-green-50 border border-green-200 rounded-full px-3 py-1.5">
                   <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
                   Signed in
                 </div>
-
-                {/* Sign out */}
                 <button
                   onClick={handleSignOut}
                   className="flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-red-500 bg-gray-100 hover:bg-red-50 border border-transparent hover:border-red-200 rounded-xl px-4 py-2 transition-all"
@@ -75,7 +79,9 @@ export const Appbar = () => {
                   Sign Out
                 </button>
               </>
-            ) : (
+            )}
+
+            {!isSignedIn && (
               <Link
                 href="/signin"
                 className="flex items-center gap-2 text-sm font-semibold text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 rounded-xl px-5 py-2.5 shadow-md shadow-indigo-500/20 transition-all"
@@ -96,6 +102,11 @@ export const Appbar = () => {
                 Sign In
               </Link>
             )}
+
+            {/* Solana wallet button — styled to match navbar height */}
+            <div className="[&>button]:!rounded-xl [&>button]:!h-10 [&>button]:!text-sm [&>button]:!font-semibold [&>button]:!py-0 [&>button]:!px-4 [&>button]:!bg-gradient-to-r [&>button]:!from-violet-600 [&>button]:!to-indigo-600 [&>button:hover]:!from-violet-700 [&>button:hover]:!to-indigo-700 [&>button]:!shadow-md [&>button]:!shadow-indigo-500/20">
+              {publicKey ? <WalletDisconnectButton /> : <WalletMultiButton />}
+            </div>
           </div>
         </div>
       </div>
