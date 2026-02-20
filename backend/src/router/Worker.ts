@@ -10,32 +10,30 @@ const router = Router();
 export const WORKERJWT_SECRET = process.env.JWT_SECRET! + "worker";
 
 router.post("/signin", async (req, res) => {
-  const hardcodedWalletAddress = "0x1234567890123456789012345678901234567890";
+  const { publicKey } = req.body;
 
-  const existingUser = await prisma.worker.findUnique({
-    where: {
-      address: hardcodedWalletAddress,
-    },
+  if (!publicKey || typeof publicKey !== "string") {
+    return res.status(400).json({ message: "publicKey is required" });
+  }
+
+  const existingWorker = await prisma.worker.findUnique({
+    where: { address: publicKey },
   });
 
-  if (existingUser) {
-    const token = jwt.sign(
-      {
-        userId: existingUser.id,
-      },
-      WORKERJWT_SECRET,
-      { expiresIn: "1h" },
-    );
+  if (existingWorker) {
+    const token = jwt.sign({ userId: existingWorker.id }, WORKERJWT_SECRET, {
+      expiresIn: "1h",
+    });
     res.json({ token });
   } else {
-    const newUser = await prisma.worker.create({
+    const newWorker = await prisma.worker.create({
       data: {
-        address: hardcodedWalletAddress,
+        address: publicKey,
         pending_amount: 0,
         locked_amount: 0,
       },
     });
-    const token = jwt.sign({ userId: newUser.id }, WORKERJWT_SECRET, {
+    const token = jwt.sign({ userId: newWorker.id }, WORKERJWT_SECRET, {
       expiresIn: "1h",
     });
     res.json({ token });
@@ -44,7 +42,6 @@ router.post("/signin", async (req, res) => {
 
 router.get("/nextTask", workerMiddleware, async (req, res) => {
   const userId = req.userId;
-  console.log(userId);
 
   const task = await getNextTask(Number(userId));
 
@@ -74,52 +71,48 @@ router.post("/submission", workerMiddleware, async (req, res) => {
 
   if (parsedBody.success) {
     const task = await getNextTask(Number(userId));
-    if (!task || task?.id !== Number(parsedBody.data.taskId)) {
-      return res.status(411).json({
-        message: "Incorrect task id",
-      });
+    if (!task || task.id !== parsedBody.data.taskId) {
+      return res.status(411).json({ message: "Incorrect task id" });
     }
 
     const amount = BigInt(task.amount) / BigInt(TOTAL_SUBMISSIONS);
 
-    const submission = await prisma.$transaction(async (tx) => {
-      const submission = await tx.submission.create({
+    await prisma.$transaction(async (tx) => {
+      await tx.submission.create({
         data: {
-          option_id: Number(parsedBody.data.selection),
+          option_id: parsedBody.data.selection,
           worker_id: Number(userId),
-          task_id: Number(parsedBody.data.taskId),
-          amount: Number(amount),
+          task_id: parsedBody.data.taskId,
+          amount,
         },
       });
 
       await tx.worker.update({
-        where: {
-          id: Number(userId),
-        },
-        data: {
-          pending_amount: {
-            increment: amount,
-          },
-        },
+        where: { id: Number(userId) },
+        data: { pending_amount: { increment: amount } },
       });
 
-      return submission;
+      // Mark task as done once enough submissions are collected
+      const submissionCount = await tx.submission.count({
+        where: { task_id: parsedBody.data.taskId },
+      });
+      if (submissionCount >= TOTAL_SUBMISSIONS) {
+        await tx.task.update({
+          where: { id: parsedBody.data.taskId },
+          data: { done: true },
+        });
+      }
     });
 
     const nextTask = await getNextTask(Number(userId));
     res.json({
       nextTask: nextTask
-        ? {
-            ...nextTask,
-            amount: nextTask.amount.toString(),
-          }
+        ? { ...nextTask, amount: nextTask.amount.toString() }
         : null,
       amount: amount.toString(),
     });
   } else {
-    res.status(411).json({
-      message: "Incorrect inputs",
-    });
+    res.status(411).json({ message: "Incorrect inputs" });
   }
 });
 

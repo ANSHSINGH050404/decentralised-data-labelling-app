@@ -1,11 +1,9 @@
 "use client";
-import { PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 import { UploadImageCard, ImageItem } from "@/components/UploadImage";
 import { BACKEND_URL, CLOUDFRONT_URL } from "@/utils";
 import axios from "axios";
 import { useRouter } from "next/navigation";
-import { useCallback, useRef, useState } from "react";
-import { useWallet, useConnection } from "@solana/wallet-adapter-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 function randomId() {
   return Math.random().toString(36).slice(2, 10);
@@ -14,13 +12,15 @@ function randomId() {
 export const Upload = () => {
   const [images, setImages] = useState<ImageItem[]>([]);
   const [title, setTitle] = useState("");
-  const [txSignature, setTxSignature] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const { publicKey, sendTransaction } = useWallet();
-  const { connection } = useConnection();
+  const [isSignedIn, setIsSignedIn] = useState(false);
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setIsSignedIn(!!localStorage.getItem("token"));
+  }, []);
 
   // ─── Upload a single file to S3 ──────────────────────────────────────────
   async function uploadFile(id: string, file: File) {
@@ -117,6 +117,10 @@ export const Upload = () => {
 
   // ─── Submit task ──────────────────────────────────────────────────────────
   async function onSubmit() {
+    if (!isSignedIn) {
+      router.push("/signin");
+      return;
+    }
     const doneImages = images.filter((img) => img.status === "done");
     if (!title.trim()) {
       alert("Please add a task title");
@@ -134,7 +138,7 @@ export const Upload = () => {
         {
           options: doneImages.map((img) => ({ imageUrl: img.cloudUrl })),
           title,
-          signature: txSignature,
+          signature: "dev-bypass",
         },
         {
           headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
@@ -149,44 +153,11 @@ export const Upload = () => {
     }
   }
 
-  // ─── Payment ──────────────────────────────────────────────────────────────
-  async function makePayment() {
-    if (!publicKey) {
-      alert("Please connect your wallet first");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const transaction = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: publicKey,
-          toPubkey: new PublicKey(
-            "2KeovpYvrgpziaDsq8nbNMP4mc48VNBVXb5arbqrg9Cq",
-          ),
-          lamports: 100_000_000,
-        }),
-      );
-      const {
-        context: { slot: minContextSlot },
-        value: { blockhash, lastValidBlockHeight },
-      } = await connection.getLatestBlockhashAndContext();
-      const signature = await sendTransaction(transaction, connection, {
-        minContextSlot,
-      });
-      await connection.confirmTransaction({
-        blockhash,
-        lastValidBlockHeight,
-        signature,
-      });
-      setTxSignature(signature);
-    } catch (error) {
-      console.error("Payment failed:", error);
-      alert("Payment failed. Please try again.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
+  // Placeholder kept for future Solana payment integration
+  // async function makePayment() { ... }
 
+  // ─── dummy to satisfy removed refs ───────────────────────────────────────
+  void 0; // (makePayment removed — using direct submit flow)
   // ─── Derived state ────────────────────────────────────────────────────────
   const doneCount = images.filter((i) => i.status === "done").length;
   const uploadingCount = images.filter(
@@ -425,11 +396,11 @@ export const Upload = () => {
 
           {/* Action button */}
           <button
-            onClick={txSignature ? onSubmit : makePayment}
+            onClick={onSubmit}
             disabled={
               submitting ||
-              !publicKey ||
-              (txSignature ? doneCount === 0 : false)
+              !isSignedIn ||
+              (images.length > 0 && doneCount === 0 && uploadingCount === 0)
             }
             className="w-full py-4 px-6 bg-gradient-to-r from-violet-600 to-indigo-600 text-white font-semibold rounded-xl
               hover:from-violet-700 hover:to-indigo-700
@@ -458,18 +429,16 @@ export const Upload = () => {
                     d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                   />
                 </svg>
-                {txSignature ? "Creating Task…" : "Processing payment…"}
+                Creating Task…
               </>
-            ) : !publicKey ? (
-              "Connect Wallet to Continue"
-            ) : txSignature ? (
-              allDone ? (
-                `Submit Task (${doneCount} image${doneCount !== 1 ? "s" : ""})`
-              ) : (
-                `Waiting for uploads… (${doneCount}/${images.length} ready)`
-              )
+            ) : !isSignedIn ? (
+              "Sign In to Continue"
+            ) : uploadingCount > 0 ? (
+              `Waiting for uploads… (${doneCount}/${images.length} ready)`
+            ) : allDone ? (
+              `Submit Task (${doneCount} image${doneCount !== 1 ? "s" : ""})`
             ) : (
-              "Pay 0.1 SOL to Continue"
+              "Submit Task"
             )}
           </button>
         </div>

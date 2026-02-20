@@ -2,7 +2,7 @@
 import { Appbar } from "@/components/Appbar";
 import { BACKEND_URL } from "@/utils";
 import axios from "axios";
-import { useEffect, useState } from "react";
+import { useEffect, useState, use } from "react";
 
 async function getTaskDetails(taskId: string) {
   const response = await axios.get(
@@ -17,10 +17,11 @@ async function getTaskDetails(taskId: string) {
 }
 
 export default function Page({
-  params: { taskId },
+  params,
 }: {
-  params: { taskId: string };
+  params: Promise<{ taskId: string }>;
 }) {
+  const { taskId } = use(params);
   const [result, setResult] = useState<
     Record<
       string,

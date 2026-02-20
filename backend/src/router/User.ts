@@ -23,9 +23,6 @@ router.get("/presignedUrl", authMiddleware, async (req, res) => {
   const userId = req.userId!;
   const key = `fever/${userId}/${randomUUID()}.jpg`;
 
-  console.log(userId);
-  console.log(key);
-
   const { url, fields } = await createPresignedPost(s3Client, {
     Bucket: process.env.BUCKET_NAME!,
     Key: key,
@@ -94,7 +91,7 @@ router.post("/task", authMiddleware, async (req, res) => {
   const task = await prisma.task.create({
     data: {
       title: parsedBody.data.title ?? DEFAULT_TITLE,
-      amount: 1 * TOTAL_DECIMALS,
+      amount: BigInt(1 * TOTAL_DECIMALS),
       signature: parsedBody.data.signature,
       user_id: req.userId!,
     },
@@ -138,6 +135,9 @@ router.get("/task", authMiddleware, async (req, res) => {
       },
       include: {
         options: true,
+        submissions: {
+          select: { option_id: true },
+        },
       },
     });
 
@@ -147,7 +147,10 @@ router.get("/task", authMiddleware, async (req, res) => {
       });
     }
 
-    res.json(taskDetails);
+    res.json({
+      ...taskDetails,
+      amount: taskDetails.amount.toString(), // BigInt → string for JSON
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
