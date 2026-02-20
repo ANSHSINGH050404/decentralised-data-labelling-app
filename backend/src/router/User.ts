@@ -7,6 +7,7 @@ import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 import { randomUUID } from "crypto";
 import { createTaskInput } from "../types";
 import {z} from "zod";
+import { TOTAL_DECIMALS } from "../config";
 const router = Router();
 
 const s3Client = new S3Client({
@@ -17,7 +18,7 @@ const s3Client = new S3Client({
   },
 });
 
-const DEFAULT_TITLE = "";
+const DEFAULT_TITLE = "Select the most clickable thumbnail";
 router.get("/presignedUrl", authMiddleware, async (req, res) => {
   const userId = req.userId!;
   const key = `fever/${userId}/${randomUUID()}.jpg`;
@@ -86,7 +87,7 @@ router.post("/task", authMiddleware, async (req, res) => {
 const task = await prisma.task.create({
   data: {
     title: parsedBody.data.title ?? DEFAULT_TITLE,
-    amount: 1,
+    amount: 1 * TOTAL_DECIMALS,
     signature: parsedBody.data.signature,
     user_id: req.userId!,
   },
@@ -148,6 +149,22 @@ router.get("/task", authMiddleware, async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
+
+router.get("/balance", authMiddleware, async (req, res) => {
+    // @ts-ignore
+    const userId: string = req.userId;
+
+    const worker = await prisma.worker.findFirst({
+        where: {
+            id: Number(userId)
+        }
+    })
+
+    res.json({
+        pendingAmount: worker?.pending_amount,
+        lockedAmount: worker?.pending_amount,
+    })
+})
 
 
 export default router;

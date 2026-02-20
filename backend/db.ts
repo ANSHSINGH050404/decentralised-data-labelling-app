@@ -8,3 +8,26 @@ const adapter = new PrismaPg({
 export const prisma = new PrismaClient({
   adapter,
 });
+
+
+
+export const getNextTask = async (userId: number) => {
+    const task = await prisma.task.findFirst({
+        where: {
+            done: false,
+            submissions: {
+                none: {
+                    worker_id: userId
+                }
+            }
+        },
+        select: {
+            id: true,
+            amount: true,
+            title: true,
+            options: true
+        }
+    })
+
+    return task
+}
