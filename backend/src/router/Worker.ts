@@ -54,7 +54,10 @@ router.get("/nextTask", workerMiddleware, async (req, res) => {
     });
   } else {
     res.json({
-      task,
+      task: {
+        ...task,
+        amount: task.amount.toString(),
+      },
     });
   }
 });
@@ -85,7 +88,7 @@ router.post("/submission", workerMiddleware, async (req, res) => {
           option_id: Number(parsedBody.data.selection),
           worker_id: Number(userId),
           task_id: Number(parsedBody.data.taskId),
-          amount: amount,
+          amount: Number(amount),
         },
       });
 
@@ -95,7 +98,7 @@ router.post("/submission", workerMiddleware, async (req, res) => {
         },
         data: {
           pending_amount: {
-            increment: amount * BigInt(TOTAL_DECIMALS),
+            increment: Number(amount * BigInt(TOTAL_DECIMALS)),
           },
         },
       });
@@ -105,14 +108,72 @@ router.post("/submission", workerMiddleware, async (req, res) => {
 
     const nextTask = await getNextTask(Number(userId));
     res.json({
-      nextTask,
-      amount,
+      nextTask: nextTask
+        ? {
+            ...nextTask,
+            amount: nextTask.amount.toString(),
+          }
+        : null,
+      amount: amount.toString(),
     });
   } else {
     res.status(411).json({
       message: "Incorrect inputs",
     });
   }
+});
+
+router.post("/payout", workerMiddleware, async (req, res) => {
+  // @ts-ignore
+  const userId: string = req.userId;
+  const worker = await prisma.worker.findFirst({
+    where: { id: Number(userId) },
+  });
+
+  if (!worker) {
+    return res.status(403).json({
+      message: "User not found",
+    });
+  }
+
+  const address = worker?.address;
+
+  //logic to create  a txns
+
+  const txnId = "0x536789675373767";
+
+  // We should add a lock here
+  await prisma.$transaction(async (tx) => {
+    await tx.worker.update({
+      where: {
+        id: Number(userId),
+      },
+      data: {
+        pending_amount: {
+          decrement: worker.pending_amount,
+        },
+        locked_amount: {
+          increment: worker.pending_amount,
+        },
+      },
+    });
+
+    await tx.payouts.create({
+      data: {
+        user_id: Number(userId),
+        amount: worker.pending_amount,
+        status: "Processing",
+        signature: txnId,
+      },
+    });
+  });
+
+  //send the txn to the solana blockchain
+
+  res.json({
+    message: "Processing payout",
+    amount: worker.pending_amount.toString(),
+  });
 });
 
 export default router;
