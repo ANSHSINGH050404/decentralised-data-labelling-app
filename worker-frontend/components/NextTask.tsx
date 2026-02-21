@@ -5,13 +5,13 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 interface Task {
-  id: string;
+  id: number;
   amount: string;
   title: string;
   options: {
-    id: string;
+    id: number;
     image_url: string;
-    task_id: string;
+    task_id: number;
   }[];
 }
 
@@ -51,14 +51,14 @@ export const NextTask = () => {
       });
   }, []);
 
-  async function handleSelect(optionId: string) {
+  async function handleSelect(optionId: number) {
     setSubmitting(true);
     setError("");
     try {
       const response = await axios.post(
         `${BACKEND_URL}/v1/worker/submission`,
         {
-          taskId: currentTask!.id.toString(),
+          taskId: currentTask!.id,
           selection: optionId,
         },
         {

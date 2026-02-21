@@ -26,7 +26,7 @@ export const Appbar = () => {
 
     try {
       const message = new TextEncoder().encode(
-        "Sign this message into LabelFlow to get started"
+        "Sign this message into LabelFlow to get started",
       );
 
       const signature = await signMessage(message);
@@ -38,8 +38,10 @@ export const Appbar = () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          signature: Array.from(signature),       // Uint8Array → plain array
-          publicKey: publicKey.toBase58(),         // PublicKey object → string
+          signature: {
+            data: Array.from(signature),
+          }, // Uint8Array → { data: [...] }
+          publicKey: publicKey.toBase58(), // PublicKey object → string
         }),
       });
 

@@ -9,32 +9,14 @@ import { use, useEffect, useState } from "react";
 interface Option {
   id: number;
   image_url: string;
-  task_id: number;
-  submission_count?: number; // will be derived from submissions
-}
-
-interface Submission {
-  option_id: number;
+  submissionCount: number;
 }
 
 interface TaskDetail {
   id: number;
   title: string;
-  user_id: number;
   options: Option[];
-  submissions?: Submission[];
-}
-
-// ── Vote tallying ─────────────────────────────────────────────────────────────
-function tallyVotes(task: TaskDetail): Record<number, number> {
-  const counts: Record<number, number> = {};
-  for (const opt of task.options) {
-    counts[opt.id] = 0;
-  }
-  for (const sub of task.submissions ?? []) {
-    counts[sub.option_id] = (counts[sub.option_id] ?? 0) + 1;
-  }
-  return counts;
+  totalSubmissions: number;
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
@@ -43,7 +25,6 @@ export default function TaskPage({
 }: {
   params: Promise<{ taskId: string }>;
 }) {
-  // Next.js 16 / React 19: params is a Promise — must be unwrapped with use()
   const { taskId } = use(params);
   const [task, setTask] = useState<TaskDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -143,9 +124,8 @@ export default function TaskPage({
     );
   }
 
-  const votes = tallyVotes(task);
-  const totalVotes = Object.values(votes).reduce((a, b) => a + b, 0);
-  const maxVotes = Math.max(...Object.values(votes), 1);
+  const totalVotes = task.totalSubmissions;
+  const maxVotes = Math.max(...task.options.map((o) => o.submissionCount), 1);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-violet-50 via-white to-indigo-50">
@@ -211,7 +191,7 @@ export default function TaskPage({
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {task.options.map((option) => {
-              const count = votes[option.id] ?? 0;
+              const count = option.submissionCount;
               const pct =
                 totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
               const isWinner = count === maxVotes && totalVotes > 0;
