@@ -23,7 +23,9 @@ const s3Client = new S3Client({
 const PARENT_WALLET_ADDRESS = "9ot6dE3PaWePG3mvEHmaNvXopTweV1D72N6Xp8T9NK3B";
 const LAMPORTS_PER_IMAGE = 100_000_000; // 0.1 SOL
 const DEFAULT_TITLE = "Select the most clickable thumbnail";
-const connection = new Connection(process.env.RPC_URL! ?? "https://api.devnet.solana.com");
+const connection = new Connection(
+  process.env.RPC_URL! ?? "https://api.devnet.solana.com",
+);
 
 // ─── Presigned URL ────────────────────────────────────────────────────────────
 
@@ -91,13 +93,13 @@ router.post("/signin", async (req, res) => {
     // FIX: actually verify the wallet signature (was completely missing before)
     // Without this, anyone who knows a user's public key can sign in as them.
     const message = new TextEncoder().encode(
-      "Sign this message into LabelFlow to get started"
+      "Sign this message into LabelFlow to get started",
     );
 
     const isValid = nacl.sign.detached.verify(
       message,
       new Uint8Array(signature.data),
-      new PublicKey(publicKey).toBytes()
+      new PublicKey(publicKey).toBytes(),
     );
 
     if (!isValid) {
@@ -112,7 +114,7 @@ router.post("/signin", async (req, res) => {
       const token = jwt.sign(
         { userId: existingUser.id },
         process.env.JWT_SECRET!,
-        { expiresIn: "1h" }
+        { expiresIn: "1h" },
       );
       return res.json({ token });
     }
@@ -145,7 +147,9 @@ router.post("/task", authMiddleware, async (req, res) => {
   const parsedBody = createTaskInput.safeParse(req.body);
 
   if (!parsedBody.success) {
-    return res.status(400).json({ message: "Invalid input", errors: parsedBody.error.flatten() });
+    return res
+      .status(400)
+      .json({ message: "Invalid input", errors: parsedBody.error.flatten() });
   }
 
   const { signature, options, title } = parsedBody.data;
@@ -156,7 +160,11 @@ router.post("/task", authMiddleware, async (req, res) => {
     // FIX: prevent signature replay — one transaction hash can only create one task
     const existingTask = await prisma.task.findFirst({ where: { signature } });
     if (existingTask) {
-      return res.status(409).json({ message: "This transaction has already been used to create a task" });
+      return res
+        .status(409)
+        .json({
+          message: "This transaction has already been used to create a task",
+        });
     }
 
     // 1. Fetch the on-chain transaction
@@ -167,11 +175,22 @@ router.post("/task", authMiddleware, async (req, res) => {
       });
     } catch (err) {
       console.error("Failed to fetch transaction:", err);
-      return res.status(400).json({ message: "Could not fetch transaction from the network" });
+      return res
+        .status(400)
+        .json({ message: "Could not fetch transaction from the network" });
     }
 
     if (!transaction) {
-      return res.status(411).json({ message: "Transaction not found on-chain" });
+      return res
+        .status(411)
+        .json({ message: "Transaction not found on-chain" });
+    }
+
+    // FIX: Verify the transaction succeeded on-chain
+    if (transaction.meta?.err) {
+      return res.status(400).json({
+        message: "Transaction failed on the Solana network",
+      });
     }
 
     const accountKeys = transaction.transaction.message.getAccountKeys();
@@ -186,7 +205,11 @@ router.post("/task", authMiddleware, async (req, res) => {
     }
 
     if (treasuryIndex === -1) {
-      return res.status(411).json({ message: "Transaction was not sent to the correct treasury address" });
+      return res
+        .status(411)
+        .json({
+          message: "Transaction was not sent to the correct treasury address",
+        });
     }
 
     // 3. Verify the treasury received the correct amount
@@ -302,7 +325,9 @@ router.get("/task", authMiddleware, async (req, res) => {
 
     if (!taskDetails) {
       // Use 403 rather than 404 to avoid leaking whether a task ID exists
-      return res.status(403).json({ message: "You don't have access to this task" });
+      return res
+        .status(403)
+        .json({ message: "You don't have access to this task" });
     }
 
     // Aggregate submission counts per option for convenience
@@ -354,7 +379,7 @@ router.get("/tasks", authMiddleware, async (req, res) => {
         amount: t.amount.toString(),
         submissionCount: t._count.submissions,
         options: t.options,
-      }))
+      })),
     );
   } catch (err) {
     console.error("[GET /tasks]", err);

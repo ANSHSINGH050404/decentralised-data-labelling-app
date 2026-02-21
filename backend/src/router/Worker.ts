@@ -42,11 +42,11 @@ function splitAmount(total: bigint, parts: bigint): [bigint, bigint] {
  * Returns the worker's pending and locked balances.
  */
 router.get("/balance", workerMiddleware, async (req, res) => {
-  const userId: string = req.userId!;
+  const userId: number = req.userId!;
 
   try {
     const worker = await prisma.worker.findFirst({
-      where: { id: Number(userId) },
+      where: { id: userId },
     });
 
     if (!worker) {
@@ -107,9 +107,7 @@ router.post("/signin", async (req, res) => {
       });
       return res.json({
         token,
-        amount: (
-          existingWorker.pending_amount / BigInt(TOTAL_DECIMALS)
-        ).toString(),
+        amount: existingWorker.pending_amount.toString(), // Return raw lamports as string to avoid truncation
       });
     }
 
@@ -140,7 +138,7 @@ router.get("/nextTask", workerMiddleware, async (req, res) => {
   const userId = req.userId!;
 
   try {
-    const task = await getNextTask(Number(userId));
+    const task = await getNextTask(userId);
 
     if (!task) {
       return res.status(411).json({
@@ -178,6 +176,7 @@ router.post("/submission", workerMiddleware, async (req, res) => {
     // FIX: fetch the task directly by ID instead of relying on getNextTask for validation
     const task = await prisma.task.findUnique({
       where: { id: taskId, done: false },
+      include: { options: true }, // Include options to validate selection
     });
 
     if (!task) {
@@ -186,35 +185,51 @@ router.post("/submission", workerMiddleware, async (req, res) => {
         .json({ message: "Task not found or already completed" });
     }
 
+    // FIX: Verify selection belongs to this task
+    if (!task.options.some((o) => o.id === selection)) {
+      return res.status(400).json({ message: "Invalid option for this task" });
+    }
+
     // FIX: preserve remainder lamports — give the last submitter the dust
     const [baseAmount] = splitAmount(task.amount, BigInt(TOTAL_SUBMISSIONS));
 
     let nextTask = null;
 
     await prisma.$transaction(async (tx) => {
-      // This will throw if the worker already submitted for this task (@@unique constraint)
-      const submission = await tx.submission.create({
-        data: {
-          option_id: selection,
-          worker_id: Number(userId),
-          task_id: taskId,
-          amount: baseAmount,
-        },
+      // Re-check task status inside transaction to prevent over-submission race
+      const lockedTask = await tx.task.findUnique({
+        where: { id: taskId },
+        select: { done: true, amount: true },
       });
+
+      if (!lockedTask || lockedTask.done) {
+        throw new Error("TASK_ALREADY_DONE");
+      }
 
       const submissionCount = await tx.submission.count({
         where: { task_id: taskId },
       });
 
-      const isLastSubmission = submissionCount >= TOTAL_SUBMISSIONS;
+      if (submissionCount >= TOTAL_SUBMISSIONS) {
+        throw new Error("TASK_ALREADY_DONE");
+      }
 
-      // FIX: if this is the last submission, credit the remainder to this worker
+      await tx.submission.create({
+        data: {
+          option_id: selection,
+          worker_id: userId,
+          task_id: taskId,
+          amount: baseAmount,
+        },
+      });
+
+      const isLastSubmission = submissionCount + 1 >= TOTAL_SUBMISSIONS;
       const remainder = isLastSubmission
         ? task.amount % BigInt(TOTAL_SUBMISSIONS)
         : 0n;
 
       await tx.worker.update({
-        where: { id: Number(userId) },
+        where: { id: userId },
         data: { pending_amount: { increment: baseAmount + remainder } },
       });
 
@@ -227,7 +242,7 @@ router.post("/submission", workerMiddleware, async (req, res) => {
     });
 
     // FIX: fetch next task only once, after the transaction
-    nextTask = await getNextTask(Number(userId));
+    nextTask = await getNextTask(userId);
 
     res.json({
       nextTask: nextTask
@@ -242,6 +257,11 @@ router.post("/submission", workerMiddleware, async (req, res) => {
         .status(409)
         .json({ message: "You have already submitted for this task" });
     }
+    if (err?.message === "TASK_ALREADY_DONE") {
+      return res
+        .status(410)
+        .json({ message: "Task was just completed by others" });
+    }
     console.error("[POST /submission]", err);
     res.status(500).json({ message: "Internal server error" });
   }
@@ -253,10 +273,9 @@ router.post("/submission", workerMiddleware, async (req, res) => {
  */
 
 router.post("/payout", workerMiddleware, async (req, res) => {
-  // @ts-ignore
-  const userId: string = req.userId;
+  const userId = req.userId!;
   const worker = await prisma.worker.findFirst({
-    where: { id: Number(userId) },
+    where: { id: userId },
   });
 
   if (!worker) {
@@ -265,65 +284,98 @@ router.post("/payout", workerMiddleware, async (req, res) => {
     });
   }
 
+  // 1. Atomically move funds from pending to locked to prevent double spending
+  const amountToPay = worker.pending_amount;
+  if (amountToPay <= 0n) {
+    return res.status(400).json({ message: "No funds to payout" });
+  }
+
+  const payout = await prisma.$transaction(async (tx) => {
+    // Check balance again inside transaction
+    const lockedWorker = await tx.worker.findUnique({
+      where: { id: userId },
+    });
+    if (!lockedWorker || lockedWorker.pending_amount < amountToPay) {
+      throw new Error("INSUFFICIENT_FUNDS");
+    }
+
+    await tx.worker.update({
+      where: { id: userId },
+      data: {
+        pending_amount: { decrement: amountToPay },
+        locked_amount: { increment: amountToPay },
+      },
+    });
+
+    return await tx.payouts.create({
+      data: {
+        worker_id: userId,
+        amount: amountToPay,
+        status: "Processing",
+        signature: "", // Will update after sending
+      },
+    });
+  });
+
   const transaction = new Transaction().add(
     SystemProgram.transfer({
       fromPubkey: new PublicKey("2KeovpYvrgpziaDsq8nbNMP4mc48VNBVXb5arbqrg9Cq"),
       toPubkey: new PublicKey(worker.address),
-      lamports:
-        (1_000_000_000n * worker.pending_amount) / BigInt(TOTAL_DECIMALS),
+      lamports: Number(amountToPay), // Now using raw lamports
     }),
   );
 
-  console.log(worker.address);
-
   const keypair = Keypair.fromSecretKey(decode(privateKey));
-
-  // TODO: There's a double spending problem here
-  // The user can request the withdrawal multiple times
-  // Can u figure out a way to fix it?
   let signature = "";
+  let success = false;
+
   try {
     signature = await sendAndConfirmTransaction(connection, transaction, [
       keypair,
     ]);
+    success = true;
   } catch (e) {
-    return res.json({
-      message: "Transaction failed",
-    });
+    console.error("Payout transaction failed:", e);
   }
 
-  console.log(signature);
-
-  // We should add a lock here
+  // 3. Finalize or Revert
   await prisma.$transaction(async (tx) => {
-    await tx.worker.update({
-      where: {
-        id: Number(userId),
-      },
-      data: {
-        pending_amount: {
-          decrement: worker.pending_amount,
+    if (success) {
+      await tx.worker.update({
+        where: { id: userId },
+        data: { locked_amount: { decrement: amountToPay } },
+      });
+      await tx.payouts.update({
+        where: { id: payout.id },
+        data: { status: "Success", signature },
+      });
+    } else {
+      // Revert funds back to pending
+      await tx.worker.update({
+        where: { id: userId },
+        data: {
+          pending_amount: { increment: amountToPay },
+          locked_amount: { decrement: amountToPay },
         },
-        locked_amount: {
-          increment: worker.pending_amount,
-        },
-      },
-    });
-
-    await tx.payouts.create({
-      data: {
-        worker_id: Number(userId),
-        amount: worker.pending_amount,
-        status: "Processing",
-        signature: signature,
-      },
-    });
+      });
+      await tx.payouts.update({
+        where: { id: payout.id },
+        data: { status: "Failure" },
+      });
+    }
   });
 
-  res.json({
-    message: "Processing payout",
-    amount: worker.pending_amount,
-  });
+  if (success) {
+    res.json({
+      message: "Payout successful",
+      signature,
+      amount: amountToPay.toString(),
+    });
+  } else {
+    res
+      .status(500)
+      .json({ message: "Transaction failed, funds returned to balance" });
+  }
 });
 
 export default router;
