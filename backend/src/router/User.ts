@@ -24,7 +24,7 @@ const PARENT_WALLET_ADDRESS = "9ot6dE3PaWePG3mvEHmaNvXopTweV1D72N6Xp8T9NK3B";
 const LAMPORTS_PER_IMAGE = 100_000_000; // 0.1 SOL
 const DEFAULT_TITLE = "Select the most clickable thumbnail";
 const connection = new Connection(
-  process.env.RPC_URL! ?? "https://api.devnet.solana.com",
+  process.env.RPC_URL || "https://api.devnet.solana.com",
 );
 
 // ─── Presigned URL ────────────────────────────────────────────────────────────
@@ -156,28 +156,39 @@ router.post("/task", authMiddleware, async (req, res) => {
   const imageCount = options.length;
   const expectedLamports = LAMPORTS_PER_IMAGE * imageCount;
 
+  console.log(
+    `Creating task: sig=${signature}, images=${imageCount}, expected=${expectedLamports} lamports`,
+  );
+  console.log(`Using RPC: ${connection.rpcEndpoint}`);
+
   try {
     // FIX: prevent signature replay — one transaction hash can only create one task
     const existingTask = await prisma.task.findFirst({ where: { signature } });
     if (existingTask) {
-      return res
-        .status(409)
-        .json({
-          message: "This transaction has already been used to create a task",
-        });
+      return res.status(409).json({
+        message: "This transaction has already been used to create a task",
+      });
     }
 
-    // 1. Fetch the on-chain transaction
+    // 1. Fetch the on-chain transaction with a robust retry logic for devnet stability
     let transaction;
-    try {
-      transaction = await connection.getTransaction(signature, {
-        maxSupportedTransactionVersion: 1,
-      });
-    } catch (err) {
-      console.error("Failed to fetch transaction:", err);
-      return res
-        .status(400)
-        .json({ message: "Could not fetch transaction from the network" });
+    let retries = 0;
+    while (retries < 10) {
+      try {
+        transaction = await connection.getTransaction(signature, {
+          maxSupportedTransactionVersion: 1,
+          commitment: "confirmed",
+        });
+        if (transaction) break;
+      } catch (err) {
+        console.error(
+          `Attempt ${retries + 1} failed to fetch transaction:`,
+          err,
+        );
+      }
+      retries++;
+      console.log(`Polling transaction... attempt ${retries}`);
+      if (!transaction) await new Promise((r) => setTimeout(r, 1000));
     }
 
     if (!transaction) {
@@ -205,11 +216,9 @@ router.post("/task", authMiddleware, async (req, res) => {
     }
 
     if (treasuryIndex === -1) {
-      return res
-        .status(411)
-        .json({
-          message: "Transaction was not sent to the correct treasury address",
-        });
+      return res.status(411).json({
+        message: "Transaction was not sent to the correct treasury address",
+      });
     }
 
     // 3. Verify the treasury received the correct amount

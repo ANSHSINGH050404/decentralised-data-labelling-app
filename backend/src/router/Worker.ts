@@ -20,7 +20,7 @@ const router = Router();
 
 export const WORKERJWT_SECRET = process.env.JWT_SECRET! + "worker";
 const connection = new Connection(
-  process.env.RPC_URL! ?? "https://api.devnet.solana.com",
+  process.env.RPC_URL || "https://api.devnet.solana.com",
 );
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
