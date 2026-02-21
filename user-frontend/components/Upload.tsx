@@ -4,6 +4,12 @@ import { BACKEND_URL, CLOUDFRONT_URL } from "@/utils";
 import axios from "axios";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
+import { useConnection, useWallet } from '@solana/wallet-adapter-react';
+
+// ── Replace with your actual Solana treasury wallet address ──────────────────
+const TREASURY_WALLET = "9ot6dE3PaWePG3mvEHmaNvXopTweV1D72N6Xp8T9NK3B";
+const LAMPORTS_PER_IMAGE = 100_000_000; // 0.1 SOL
 
 function randomId() {
   return Math.random().toString(36).slice(2, 10);
@@ -15,8 +21,11 @@ export const Upload = () => {
   const [submitting, setSubmitting] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isSignedIn, setIsSignedIn] = useState(false);
+  const [txSignature, setTxSignature] = useState("");
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { connection } = useConnection();
+  const { publicKey, sendTransaction } = useWallet();
 
   useEffect(() => {
     setIsSignedIn(!!localStorage.getItem("token"));
@@ -24,7 +33,6 @@ export const Upload = () => {
 
   // ─── Upload a single file to S3 ──────────────────────────────────────────
   async function uploadFile(id: string, file: File) {
-    // Mark as uploading
     setImages((prev) =>
       prev.map((img) =>
         img.id === id ? { ...img, status: "uploading" } : img,
@@ -82,7 +90,6 @@ export const Upload = () => {
 
     setImages((prev) => [...prev, ...newItems]);
 
-    // Upload each file (re-read from files array, matched by index)
     Array.from(files)
       .filter((f) => f.type.startsWith("image/"))
       .forEach((file, i) => {
@@ -115,13 +122,46 @@ export const Upload = () => {
     addFiles(e.dataTransfer.files);
   }
 
+  // ─── Solana payment ───────────────────────────────────────────────────────
+  async function makePayment(imageCount: number): Promise<string> {
+    if (!publicKey) throw new Error("Wallet not connected");
+
+    const transaction = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: publicKey,
+        toPubkey: new PublicKey(TREASURY_WALLET),
+        lamports: LAMPORTS_PER_IMAGE * imageCount,
+      }),
+    );
+
+    const {
+      context: { slot: minContextSlot },
+      value: { blockhash, lastValidBlockHeight },
+    } = await connection.getLatestBlockhashAndContext();
+
+    const signature = await sendTransaction(transaction, connection, {
+      minContextSlot,
+    });
+
+    await connection.confirmTransaction({
+      blockhash,
+      lastValidBlockHeight,
+      signature,
+    });
+
+    setTxSignature(signature);
+    return signature;
+  }
+
   // ─── Submit task ──────────────────────────────────────────────────────────
   async function onSubmit() {
     if (!isSignedIn) {
       router.push("/signin");
       return;
     }
+
     const doneImages = images.filter((img) => img.status === "done");
+
     if (!title.trim()) {
       alert("Please add a task title");
       return;
@@ -133,17 +173,22 @@ export const Upload = () => {
 
     setSubmitting(true);
     try {
+      // 1. Collect payment on-chain first
+      const signature = await makePayment(doneImages.length);
+
+      // 2. Create the task, passing the confirmed tx signature for verification
       const response = await axios.post(
         `${BACKEND_URL}/v1/user/task`,
         {
           options: doneImages.map((img) => ({ imageUrl: img.cloudUrl })),
           title,
-          signature: "dev-bypass",
+          signature,
         },
         {
           headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
         },
       );
+
       router.push(`/task/${response.data.id}`);
     } catch (error) {
       console.error("Failed to create task:", error);
@@ -153,11 +198,6 @@ export const Upload = () => {
     }
   }
 
-  // Placeholder kept for future Solana payment integration
-  // async function makePayment() { ... }
-
-  // ─── dummy to satisfy removed refs ───────────────────────────────────────
-  void 0; // (makePayment removed — using direct submit flow)
   // ─── Derived state ────────────────────────────────────────────────────────
   const doneCount = images.filter((i) => i.status === "done").length;
   const uploadingCount = images.filter(
@@ -202,11 +242,7 @@ export const Upload = () => {
                 <div className="flex items-center gap-3 text-xs">
                   {doneCount > 0 && (
                     <span className="flex items-center gap-1 text-green-600 font-medium">
-                      <svg
-                        className="w-3.5 h-3.5"
-                        fill="currentColor"
-                        viewBox="0 0 20 20"
-                      >
+                      <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
                         <path
                           fillRule="evenodd"
                           d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
@@ -218,35 +254,16 @@ export const Upload = () => {
                   )}
                   {uploadingCount > 0 && (
                     <span className="flex items-center gap-1 text-indigo-600 font-medium">
-                      <svg
-                        className="w-3.5 h-3.5 animate-spin"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                      >
-                        <circle
-                          className="opacity-25"
-                          cx="12"
-                          cy="12"
-                          r="10"
-                          stroke="currentColor"
-                          strokeWidth="4"
-                        />
-                        <path
-                          className="opacity-75"
-                          fill="currentColor"
-                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                        />
+                      <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                       </svg>
                       {uploadingCount} uploading
                     </span>
                   )}
                   {errorCount > 0 && (
                     <span className="flex items-center gap-1 text-red-500 font-medium">
-                      <svg
-                        className="w-3.5 h-3.5"
-                        fill="currentColor"
-                        viewBox="0 0 20 20"
-                      >
+                      <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
                         <path
                           fillRule="evenodd"
                           d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
@@ -260,20 +277,16 @@ export const Upload = () => {
               )}
             </div>
 
-            {/* Image grid — shown when there are images */}
+            {/* Image grid */}
             {images.length > 0 && (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 mb-4">
                 {images.map((item) => (
-                  <UploadImageCard
-                    key={item.id}
-                    item={item}
-                    onRemove={removeImage}
-                  />
+                  <UploadImageCard key={item.id} item={item} onRemove={removeImage} />
                 ))}
               </div>
             )}
 
-            {/* Drop zone — always visible so user can add more */}
+            {/* Drop zone */}
             <div
               onDragOver={onDragOver}
               onDragLeave={onDragLeave}
@@ -292,46 +305,22 @@ export const Upload = () => {
               {isDragging ? (
                 <>
                   <div className="w-14 h-14 rounded-full bg-indigo-100 flex items-center justify-center">
-                    <svg
-                      className="w-7 h-7 text-indigo-600"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                      />
+                    <svg className="w-7 h-7 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                     </svg>
                   </div>
-                  <p className="text-indigo-600 font-semibold">
-                    Drop to upload!
-                  </p>
+                  <p className="text-indigo-600 font-semibold">Drop to upload!</p>
                 </>
               ) : (
                 <>
-                  <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center group-hover:bg-indigo-100 transition-colors">
-                    <svg
-                      className="w-7 h-7 text-gray-400"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={1.5}
-                        d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-                      />
+                  <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center transition-colors">
+                    <svg className="w-7 h-7 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                     </svg>
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-gray-700">
-                      {images.length === 0
-                        ? "Click or drag & drop to upload"
-                        : "Add more images"}
+                      {images.length === 0 ? "Click or drag & drop to upload" : "Add more images"}
                     </p>
                     <p className="text-xs text-gray-400 mt-1">
                       PNG, JPG, WEBP · up to 5 MB each · multiple allowed
@@ -368,30 +357,34 @@ export const Upload = () => {
               </div>
               {uploadingCount > 0 && (
                 <p className="text-xs text-indigo-500 mt-2 flex items-center gap-1">
-                  <svg
-                    className="w-3 h-3 animate-spin"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    />
+                  <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
-                  {uploadingCount} image{uploadingCount !== 1 ? "s" : ""} still
-                  uploading…
+                  {uploadingCount} image{uploadingCount !== 1 ? "s" : ""} still uploading…
+                </p>
+              )}
+              {txSignature && (
+                <p className="text-xs text-green-600 mt-2 truncate">
+                  ✓ Payment confirmed:{" "}
+                  <a
+                    href={`https://solscan.io/tx/${txSignature}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline"
+                  >
+                    {txSignature.slice(0, 20)}…
+                  </a>
                 </p>
               )}
             </div>
+          )}
+
+          {/* Wallet warning */}
+          {isSignedIn && !publicKey && (
+            <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+              ⚠️ Please connect your Solana wallet to pay for the task.
+            </p>
           )}
 
           {/* Action button */}
@@ -400,6 +393,7 @@ export const Upload = () => {
             disabled={
               submitting ||
               !isSignedIn ||
+              !publicKey ||
               (images.length > 0 && doneCount === 0 && uploadingCount === 0)
             }
             className="w-full py-4 px-6 bg-gradient-to-r from-violet-600 to-indigo-600 text-white font-semibold rounded-xl
@@ -410,33 +404,20 @@ export const Upload = () => {
           >
             {submitting ? (
               <>
-                <svg
-                  className="animate-spin h-5 w-5"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                  />
+                <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
-                Creating Task…
+                Processing Payment…
               </>
             ) : !isSignedIn ? (
               "Sign In to Continue"
+            ) : !publicKey ? (
+              "Connect Wallet to Continue"
             ) : uploadingCount > 0 ? (
               `Waiting for uploads… (${doneCount}/${images.length} ready)`
             ) : allDone ? (
-              `Submit Task (${doneCount} image${doneCount !== 1 ? "s" : ""})`
+              `Pay & Submit Task (${(doneCount * 0.1).toFixed(1)} SOL)`
             ) : (
               "Submit Task"
             )}

@@ -41,10 +41,14 @@ router.get("/presignedUrl", authMiddleware, async (req, res) => {
 });
 
 router.post("/signin", async (req, res) => {
-  const { publicKey } = req.body;
+  const { publicKey ,signature} = req.body;
 
   if (!publicKey || typeof publicKey !== "string") {
     return res.status(400).json({ message: "publicKey is required" });
+  }
+
+  if (!signature || typeof signature !== "object") {
+    return res.status(400).json({ message: "signature is required" });
   }
 
   const existingUser = await prisma.user.findUnique({
