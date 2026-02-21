@@ -1,16 +1,79 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import {
+  WalletDisconnectButton,
+  WalletMultiButton,
+} from "@solana/wallet-adapter-react-ui";
+import { useWallet } from "@solana/wallet-adapter-react";
+import { BACKEND_URL } from "@/utils";
 
 export const Appbar = () => {
   const [isSignedIn, setIsSignedIn] = useState(false);
   const router = useRouter();
+  const { publicKey, signMessage } = useWallet();
+
+  const signAndSend = useCallback(async () => {
+    if (!publicKey || !signMessage) return;
+
+    // Don't re-sign if already authenticated
+    const existingToken = localStorage.getItem("token");
+    if (existingToken) {
+      setIsSignedIn(true);
+      return;
+    }
+
+    try {
+      const message = new TextEncoder().encode(
+        "Sign this message into LabelFlow to get started"
+      );
+
+      const signature = await signMessage(message);
+      if (!signature) return;
+
+      const response = await fetch(`${BACKEND_URL}/v1/worker/signin`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          signature: Array.from(signature),       // Uint8Array → plain array
+          publicKey: publicKey.toBase58(),         // PublicKey object → string
+        }),
+      });
+
+      if (!response.ok) {
+        console.error("Sign-in failed:", response.statusText);
+        return;
+      }
+
+      const data = await response.json();
+
+      if (data.token) {
+        localStorage.setItem("token", data.token);
+        setIsSignedIn(true);
+        router.push("/");
+      }
+    } catch (err) {
+      console.error("Error during sign-in:", err);
+    }
+  }, [publicKey, signMessage, router]);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
-    setIsSignedIn(!!token);
-  }, []);
+
+    if (token) {
+      // Already authenticated, no need to re-sign
+      setIsSignedIn(true);
+      return;
+    }
+
+    if (publicKey) {
+      // Wallet just connected and no token yet → trigger sign-in flow
+      signAndSend();
+    }
+  }, [publicKey, signAndSend]);
 
   function handleSignOut() {
     localStorage.removeItem("token");
@@ -40,21 +103,18 @@ export const Appbar = () => {
               </svg>
             </div>
             <span className="text-xl font-bold bg-gradient-to-r from-violet-600 to-indigo-600 bg-clip-text text-transparent">
-              LabelFlow Worker
+              LabelFlow
             </span>
           </Link>
 
           {/* Right side */}
           <div className="flex items-center gap-3">
-            {isSignedIn ? (
+            {isSignedIn && (
               <>
-                {/* Signed-in indicator */}
                 <div className="hidden sm:flex items-center gap-2 text-sm text-green-600 font-medium bg-green-50 border border-green-200 rounded-full px-3 py-1.5">
                   <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
                   Signed in
                 </div>
-
-                {/* Sign out */}
                 <button
                   onClick={handleSignOut}
                   className="flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-red-500 bg-gray-100 hover:bg-red-50 border border-transparent hover:border-red-200 rounded-xl px-4 py-2 transition-all"
@@ -75,7 +135,9 @@ export const Appbar = () => {
                   Sign Out
                 </button>
               </>
-            ) : (
+            )}
+
+            {!isSignedIn && (
               <Link
                 href="/signin"
                 className="flex items-center gap-2 text-sm font-semibold text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 rounded-xl px-5 py-2.5 shadow-md shadow-indigo-500/20 transition-all"
@@ -96,6 +158,10 @@ export const Appbar = () => {
                 Sign In
               </Link>
             )}
+
+            <div className="[&>button]:!rounded-xl [&>button]:!h-10 [&>button]:!text-sm [&>button]:!font-semibold [&>button]:!py-0 [&>button]:!px-4 [&>button]:!bg-gradient-to-r [&>button]:!from-violet-600 [&>button]:!to-indigo-600 [&>button:hover]:!from-violet-700 [&>button:hover]:!to-indigo-700 [&>button]:!shadow-md [&>button]:!shadow-indigo-500/20">
+              {publicKey ? <WalletDisconnectButton /> : <WalletMultiButton />}
+            </div>
           </div>
         </div>
       </div>

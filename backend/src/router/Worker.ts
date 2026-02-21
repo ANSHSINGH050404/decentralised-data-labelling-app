@@ -1,31 +1,118 @@
 import { Router } from "express";
+import nacl from "tweetnacl";
 import { getNextTask, prisma } from "../../db";
 import jwt from "jsonwebtoken";
 import { createSubmissionInput } from "../types";
 import { workerMiddleware } from "../middlewares/authMiddleware";
 import { TOTAL_DECIMALS, TOTAL_SUBMISSIONS } from "../config";
+import {
+  Connection,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  sendAndConfirmTransaction,
+  Keypair,
+} from "@solana/web3.js";
+import { privateKey } from "../privateKey";
+import { decode } from "bs58";
 
 const router = Router();
 
 export const WORKERJWT_SECRET = process.env.JWT_SECRET! + "worker";
+const connection = new Connection(
+  process.env.RPC_URL! ?? "https://api.devnet.solana.com",
+);
 
+// ─── Helper ──────────────────────────────────────────────────────────────────
+
+/**
+ * Divides `total` by `parts` and returns [quotient, remainder].
+ * Use the remainder for the last/first recipient to avoid losing lamports.
+ */
+function splitAmount(total: bigint, parts: bigint): [bigint, bigint] {
+  const quotient = total / parts;
+  const remainder = total % parts;
+  return [quotient, remainder];
+}
+
+// ─── Routes ──────────────────────────────────────────────────────────────────
+
+/**
+ * GET /balance
+ * Returns the worker's pending and locked balances.
+ */
+router.get("/balance", workerMiddleware, async (req, res) => {
+  const userId: string = req.userId!;
+
+  try {
+    const worker = await prisma.worker.findFirst({
+      where: { id: Number(userId) },
+    });
+
+    if (!worker) {
+      return res.status(404).json({ message: "Worker not found" });
+    }
+
+    res.json({
+      pendingAmount: worker.pending_amount.toString(),
+      lockedAmount: worker.locked_amount.toString(), // FIX: was returning pending_amount twice
+    });
+  } catch (err) {
+    console.error("[GET /balance]", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+/**
+ * POST /signin
+ * Verifies a Solana wallet signature and returns a JWT.
+ */
 router.post("/signin", async (req, res) => {
-  const { publicKey } = req.body;
+  const { publicKey, signature } = req.body;
 
+  // FIX: validate inputs BEFORE attempting to use them
   if (!publicKey || typeof publicKey !== "string") {
     return res.status(400).json({ message: "publicKey is required" });
   }
 
-  const existingWorker = await prisma.worker.findUnique({
-    where: { address: publicKey },
-  });
-
-  if (existingWorker) {
-    const token = jwt.sign({ userId: existingWorker.id }, WORKERJWT_SECRET, {
-      expiresIn: "1h",
+  // FIX: signature is an object {data: [...]}, not a string
+  if (!signature || !Array.isArray(signature.data)) {
+    return res.status(400).json({
+      message: "signature is required and must be an object with a data array",
     });
-    res.json({ token });
-  } else {
+  }
+
+  try {
+    const message = new TextEncoder().encode(
+      "Sign this message into LabelFlow to get started",
+    );
+
+    const result = nacl.sign.detached.verify(
+      message,
+      new Uint8Array(signature.data),
+      new PublicKey(publicKey).toBytes(),
+    );
+
+    if (!result) {
+      return res.status(401).json({ message: "Invalid signature" });
+    }
+
+    const existingWorker = await prisma.worker.findUnique({
+      where: { address: publicKey },
+    });
+
+    if (existingWorker) {
+      const token = jwt.sign({ userId: existingWorker.id }, WORKERJWT_SECRET, {
+        expiresIn: "1h",
+      });
+      return res.json({
+        token,
+        amount: (
+          existingWorker.pending_amount / BigInt(TOTAL_DECIMALS)
+        ).toString(),
+      });
+    }
+
     const newWorker = await prisma.worker.create({
       data: {
         address: publicKey,
@@ -33,88 +120,137 @@ router.post("/signin", async (req, res) => {
         locked_amount: 0,
       },
     });
+
     const token = jwt.sign({ userId: newWorker.id }, WORKERJWT_SECRET, {
       expiresIn: "1h",
     });
-    res.json({ token });
+
+    res.json({ token, amount: "0" });
+  } catch (err) {
+    console.error("[POST /signin]", err);
+    res.status(500).json({ message: "Internal server error" });
   }
 });
 
+/**
+ * GET /nextTask
+ * Returns the next unreviewed task for this worker.
+ */
 router.get("/nextTask", workerMiddleware, async (req, res) => {
-  const userId = req.userId;
+  const userId = req.userId!;
 
-  const task = await getNextTask(Number(userId));
+  try {
+    const task = await getNextTask(Number(userId));
 
-  if (!task) {
-    res.status(411).json({
-      message: "No more tasks left for you to review",
-    });
-  } else {
+    if (!task) {
+      return res.status(411).json({
+        message: "No more tasks left for you to review",
+      });
+    }
+
     res.json({
       task: {
         ...task,
         amount: task.amount.toString(),
       },
     });
+  } catch (err) {
+    console.error("[GET /nextTask]", err);
+    res.status(500).json({ message: "Internal server error" });
   }
 });
 
+/**
+ * POST /submission
+ * Records a worker's selection for a task and updates their pending balance.
+ */
 router.post("/submission", workerMiddleware, async (req, res) => {
-  const userId = req.userId;
+  const userId = req.userId!;
+  const parsedBody = createSubmissionInput.safeParse(req.body);
 
-  if (!userId) {
-    return res.status(401).json({ message: "Unauthorized" });
+  if (!parsedBody.success) {
+    return res.status(411).json({ message: "Incorrect inputs" });
   }
 
-  const body = req.body;
-  const parsedBody = createSubmissionInput.safeParse(body);
+  const { taskId, selection } = parsedBody.data;
 
-  if (parsedBody.success) {
-    const task = await getNextTask(Number(userId));
-    if (!task || task.id !== parsedBody.data.taskId) {
-      return res.status(411).json({ message: "Incorrect task id" });
+  try {
+    // FIX: fetch the task directly by ID instead of relying on getNextTask for validation
+    const task = await prisma.task.findUnique({
+      where: { id: taskId, done: false },
+    });
+
+    if (!task) {
+      return res
+        .status(404)
+        .json({ message: "Task not found or already completed" });
     }
 
-    const amount = BigInt(task.amount) / BigInt(TOTAL_SUBMISSIONS);
+    // FIX: preserve remainder lamports — give the last submitter the dust
+    const [baseAmount] = splitAmount(task.amount, BigInt(TOTAL_SUBMISSIONS));
+
+    let nextTask = null;
 
     await prisma.$transaction(async (tx) => {
-      await tx.submission.create({
+      // This will throw if the worker already submitted for this task (@@unique constraint)
+      const submission = await tx.submission.create({
         data: {
-          option_id: parsedBody.data.selection,
+          option_id: selection,
           worker_id: Number(userId),
-          task_id: parsedBody.data.taskId,
-          amount,
+          task_id: taskId,
+          amount: baseAmount,
         },
       });
 
-      await tx.worker.update({
-        where: { id: Number(userId) },
-        data: { pending_amount: { increment: amount } },
+      const submissionCount = await tx.submission.count({
+        where: { task_id: taskId },
       });
 
-      // Mark task as done once enough submissions are collected
-      const submissionCount = await tx.submission.count({
-        where: { task_id: parsedBody.data.taskId },
+      const isLastSubmission = submissionCount >= TOTAL_SUBMISSIONS;
+
+      // FIX: if this is the last submission, credit the remainder to this worker
+      const remainder = isLastSubmission
+        ? task.amount % BigInt(TOTAL_SUBMISSIONS)
+        : 0n;
+
+      await tx.worker.update({
+        where: { id: Number(userId) },
+        data: { pending_amount: { increment: baseAmount + remainder } },
       });
-      if (submissionCount >= TOTAL_SUBMISSIONS) {
+
+      if (isLastSubmission) {
         await tx.task.update({
-          where: { id: parsedBody.data.taskId },
+          where: { id: taskId },
           data: { done: true },
         });
       }
     });
 
-    const nextTask = await getNextTask(Number(userId));
+    // FIX: fetch next task only once, after the transaction
+    nextTask = await getNextTask(Number(userId));
+
     res.json({
       nextTask: nextTask
         ? { ...nextTask, amount: nextTask.amount.toString() }
         : null,
-      amount: amount.toString(),
+      amount: baseAmount.toString(),
     });
-  } else {
-    res.status(411).json({ message: "Incorrect inputs" });
+  } catch (err: any) {
+    // Unique constraint violation = worker already submitted for this task
+    if (err?.code === "P2002") {
+      return res
+        .status(409)
+        .json({ message: "You have already submitted for this task" });
+    }
+    console.error("[POST /submission]", err);
+    res.status(500).json({ message: "Internal server error" });
   }
 });
+
+/**
+ * POST /payout
+ * Moves a worker's pending balance to locked and sends a real Solana transaction.
+ */
 
 router.post("/payout", workerMiddleware, async (req, res) => {
   // @ts-ignore
@@ -129,11 +265,34 @@ router.post("/payout", workerMiddleware, async (req, res) => {
     });
   }
 
-  const address = worker?.address;
+  const transaction = new Transaction().add(
+    SystemProgram.transfer({
+      fromPubkey: new PublicKey("2KeovpYvrgpziaDsq8nbNMP4mc48VNBVXb5arbqrg9Cq"),
+      toPubkey: new PublicKey(worker.address),
+      lamports:
+        (1_000_000_000n * worker.pending_amount) / BigInt(TOTAL_DECIMALS),
+    }),
+  );
 
-  //logic to create  a txns
+  console.log(worker.address);
 
-  const txnId = "0x536789675373767";
+  const keypair = Keypair.fromSecretKey(decode(privateKey));
+
+  // TODO: There's a double spending problem here
+  // The user can request the withdrawal multiple times
+  // Can u figure out a way to fix it?
+  let signature = "";
+  try {
+    signature = await sendAndConfirmTransaction(connection, transaction, [
+      keypair,
+    ]);
+  } catch (e) {
+    return res.json({
+      message: "Transaction failed",
+    });
+  }
+
+  console.log(signature);
 
   // We should add a lock here
   await prisma.$transaction(async (tx) => {
@@ -156,16 +315,14 @@ router.post("/payout", workerMiddleware, async (req, res) => {
         worker_id: Number(userId),
         amount: worker.pending_amount,
         status: "Processing",
-        signature: txnId,
+        signature: signature,
       },
     });
   });
 
-  //send the txn to the solana blockchain
-
   res.json({
     message: "Processing payout",
-    amount: worker.pending_amount.toString(),
+    amount: worker.pending_amount,
   });
 });
 
