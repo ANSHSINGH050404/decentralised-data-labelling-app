@@ -4,6 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "postinstall": "prisma generate",
     "dev": "bun run --watch src/index.ts"
   },
   "devDependencies": {
