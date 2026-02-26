@@ -13,6 +13,10 @@ app.use("/api/v1/worker", WorkerRouter);
 
 const port = process.env.PORT || 5000;
 
+app.get("/health", (req, res) => {
+  res.json({ message: "OK" });
+});
+
 if (process.env.NODE_ENV !== "production") {
   app.listen(port, () => {
     console.log(`Server started on port ${port}`);
