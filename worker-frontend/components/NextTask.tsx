@@ -1,5 +1,5 @@
 "use client";
-import { BACKEND_URL } from "@/utils";
+
 import axios from "axios";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -14,6 +14,8 @@ interface Task {
     task_id: number;
   }[];
 }
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
 
 export const NextTask = () => {
   const [currentTask, setCurrentTask] = useState<Task | null>(null);

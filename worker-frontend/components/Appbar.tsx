@@ -7,7 +7,11 @@ import {
   WalletMultiButton,
 } from "@solana/wallet-adapter-react-ui";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { BACKEND_URL } from "@/utils";
+
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
+const CLOUDFRONT_URL = process.env.NEXT_PUBLIC_CLOUDFRONT_URL;
+
 
 export const Appbar = () => {
   const [isSignedIn, setIsSignedIn] = useState(false);
