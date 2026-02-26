@@ -1,12 +1,14 @@
 "use client";
 import { UploadImageCard, ImageItem } from "@/components/UploadImage";
-import { BACKEND_URL, CLOUDFRONT_URL } from "@/utils";
 import axios from "axios";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
+const CLOUDFRONT_URL = process.env.NEXT_PUBLIC_CLOUDFRONT_URL;
 // ── Replace with your actual Solana treasury wallet address ──────────────────
 const TREASURY_WALLET = "9ot6dE3PaWePG3mvEHmaNvXopTweV1D72N6Xp8T9NK3B";
 const LAMPORTS_PER_IMAGE = 100_000_000; // 0.1 SOL

@@ -1,8 +1,13 @@
 "use client";
 import { Appbar } from "@/components/Appbar";
-import { BACKEND_URL } from "@/utils";
+
 import axios from "axios";
 import { useEffect, useState, use } from "react";
+
+
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
+const CLOUDFRONT_URL = process.env.NEXT_PUBLIC_CLOUDFRONT_URL;
 
 async function getTaskDetails(taskId: string) {
   const response = await axios.get(

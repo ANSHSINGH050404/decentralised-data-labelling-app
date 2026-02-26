@@ -1,10 +1,14 @@
 "use client";
-import { BACKEND_URL } from "@/utils";
+
 import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import axios from "axios";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
+const CLOUDFRONT_URL = process.env.NEXT_PUBLIC_CLOUDFRONT_URL;
 
 export default function SignInPage() {
   const { publicKey, signMessage } = useWallet();

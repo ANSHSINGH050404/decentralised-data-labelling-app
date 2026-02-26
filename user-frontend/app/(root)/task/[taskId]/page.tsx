@@ -1,10 +1,14 @@
 "use client";
 import { Appbar } from "@/components/Appbar";
-import { BACKEND_URL } from "@/utils";
+
 import axios from "axios";
 import { useRouter } from "next/navigation";
 import { use, useEffect, useState } from "react";
 
+
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
+const CLOUDFRONT_URL = process.env.NEXT_PUBLIC_CLOUDFRONT_URL;
 // ── Types matching the backend response ──────────────────────────────────────
 interface Option {
   id: number;
