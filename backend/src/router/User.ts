@@ -1,12 +1,12 @@
 import { Router } from "express";
 import jwt from "jsonwebtoken";
 import nacl from "tweetnacl";
-import { prisma } from "../../db.js";
-import { authMiddleware } from "../middlewares/authMiddleware.js";
+import { prisma } from "../../db";
+import { authMiddleware } from "../middlewares/authMiddleware";
 import { S3Client } from "@aws-sdk/client-s3";
 import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 import { randomUUID } from "crypto";
-import { createTaskInput } from "../types.js";
+import { createTaskInput } from "../types";
 import { z } from "zod";
 import { Connection, PublicKey } from "@solana/web3.js";
 

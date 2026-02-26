@@ -1,10 +1,10 @@
 import { Router } from "express";
 import nacl from "tweetnacl";
-import { getNextTask, prisma } from "../../db.js";
+import { getNextTask, prisma } from "../../db";
 import jwt from "jsonwebtoken";
-import { createSubmissionInput } from "../types.js";
-import { workerMiddleware } from "../middlewares/authMiddleware.js";
-import { TOTAL_DECIMALS, TOTAL_SUBMISSIONS } from "../config.js";
+import { createSubmissionInput } from "../types";
+import { workerMiddleware } from "../middlewares/authMiddleware";
+import { TOTAL_DECIMALS, TOTAL_SUBMISSIONS } from "../config";
 import {
   Connection,
   PublicKey,
@@ -13,7 +13,7 @@ import {
   sendAndConfirmTransaction,
   Keypair,
 } from "@solana/web3.js";
-import { privateKey } from "../privateKey.js";
+import { privateKey } from "../privateKey";
 import bs58 from "bs58";
 
 const router = Router();
