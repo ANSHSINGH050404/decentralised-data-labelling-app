@@ -1,7 +1,7 @@
 /// <reference path="../types.d.ts" />
 import type { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
-import { WORKERJWT_SECRET } from "../router/Worker";
+import { WORKERJWT_SECRET } from "../router/Worker.js";
 
 export const authMiddleware = (
   req: Request,
