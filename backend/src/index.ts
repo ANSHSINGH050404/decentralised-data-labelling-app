@@ -1,8 +1,8 @@
 import express from "express";
 import UserRouter from "./router/User";
 import WorkerRouter from "./router/Worker";
-import cors = require("cors");
-import morgan = require("morgan");
+import cors from "cors";
+import morgan from "morgan";
 const app = express();
 
 app.use(cors());

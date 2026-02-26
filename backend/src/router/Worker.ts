@@ -14,7 +14,7 @@ import {
   Keypair,
 } from "@solana/web3.js";
 import { privateKey } from "../privateKey";
-import { decode } from "bs58";
+import bs58 from "bs58";
 
 const router = Router();
 
@@ -325,7 +325,7 @@ router.post("/payout", workerMiddleware, async (req, res) => {
     }),
   );
 
-  const keypair = Keypair.fromSecretKey(decode(privateKey));
+  const keypair = Keypair.fromSecretKey(bs58.decode(privateKey));
   let signature = "";
   let success = false;
 
